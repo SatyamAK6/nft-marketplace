@@ -1,19 +1,25 @@
-pragma solidity ^0.8.4;
+//SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.1;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "./BTCToken.sol";
+import "./BitcoinERC721.sol";
+import "./@rarible/royalties/contracts/LibPart.sol";
 
-contract NFTMarket is ReentrancyGuard {
+contract NFTMarketplace is ReentrancyGuard {
     using Counters for Counters.Counter;
     Counters.Counter private _itemIds;
     Counters.Counter private _itemsSold;
 
     address payable owner;
-    uint256 listingPrice = 0.025 ether;
+    address public tokenContract;
 
-    constructor() {
+    constructor(address _tokenContract) {
         owner = payable(msg.sender);
+        tokenContract = _tokenContract;
     }
 
     struct MarketItem {
@@ -38,20 +44,12 @@ contract NFTMarket is ReentrancyGuard {
         bool sold
     );
 
-    function getListingPrice() public view returns (uint256) {
-        return listingPrice;
-    }
-
     function createMarketItem(
         address nftContract,
         uint256 tokenId,
         uint256 price
-    ) public payable nonReentrant {
+    ) public nonReentrant {
         require(price > 0, "Price must be at least 1 wei");
-        require(
-            msg.value == listingPrice,
-            "Price must be equal to listing price"
-        );
 
         _itemIds.increment();
         uint256 itemId = _itemIds.current();
@@ -81,22 +79,37 @@ contract NFTMarket is ReentrancyGuard {
 
     function createMarketSale(address nftContract, uint256 itemId)
         public
-        payable
         nonReentrant
     {
         uint256 price = idToMarketItem[itemId].price;
         uint256 tokenId = idToMarketItem[itemId].tokenId;
-        require(
-            msg.value == price,
-            "Please submit the asking price in order to complete the purchase"
-        );
 
-        idToMarketItem[itemId].seller.transfer(msg.value);
+        LibPart.Part[] memory royalties = BitcoinERC721(nftContract)
+            .royaltiesInfo(tokenId, price);
+        uint256 marketFee = (price * 250) / 10000;
+        IERC20(tokenContract).transferFrom(msg.sender, owner, marketFee);
+        price -= marketFee;
+
+        for (uint256 i = 0; i < royalties.length; i++) {
+            IERC20(tokenContract).transferFrom(
+                msg.sender,
+                royalties[i].account,
+                royalties[i].value
+            );
+            price -= royalties[i].value;
+        }
+        IERC20(tokenContract).transferFrom(
+            msg.sender,
+            idToMarketItem[itemId].seller,
+            price
+        );
+        // send NFT from NFTContract Address to Msg.sender(receiver)
         IERC721(nftContract).transferFrom(address(this), msg.sender, tokenId);
+        // set Msg.sender(receiver) as a Owner of NFT
         idToMarketItem[itemId].owner = payable(msg.sender);
+        // set Item Sold status true.
         idToMarketItem[itemId].sold = true;
         _itemsSold.increment();
-        payable(owner).transfer(listingPrice);
     }
 
     function fetchMarketItems() public view returns (MarketItem[] memory) {
