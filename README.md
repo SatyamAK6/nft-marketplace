@@ -28,6 +28,6 @@ $ truffle test
 
 ```
 
-<p>
+<p align="center">
   Made with :coffee: and ❤️ by <b>Satyam A Khatrani</b>.
 <p/>
